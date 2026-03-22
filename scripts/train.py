@@ -37,10 +37,9 @@ def main():
     with Timer("build features"):
         df = build_features(df, cfg, is_train=True)
 
-    target_col = "target"
-    feature_cols = [c for c in df.columns if c not in ["id", target_col]]
+    feature_cols = [c for c in df.columns if c not in [cfg.id_col, cfg.target_col]]
     X = df[feature_cols]
-    y = df[target_col].values
+    y = df[cfg.target_col].values
 
     splitter = get_cv_splitter(cfg)
     fold_scores = []
@@ -57,16 +56,16 @@ def main():
 
             score = metric_fn(y_valid, preds)
             fold_scores.append(score)
-            print(f"Fold {fold}: {score:.4f}")
+            print(f"Fold {fold}: R2 = {score:.4f}")
 
             save_model(model, cfg.models_dir / f"model_fold{fold}.pkl")
 
     mean_score = np.mean(fold_scores)
-    print(f"\nCV Mean: {mean_score:.4f} (+/- {np.std(fold_scores):.4f})")
+    print(f"\nCV Mean R2: {mean_score:.4f} (+/- {np.std(fold_scores):.4f})")
 
     # Save OOF predictions
     cfg.oof_dir.mkdir(parents=True, exist_ok=True)
-    oof_df = pd.DataFrame({"id": df["id"], "oof_pred": oof_preds})
+    oof_df = pd.DataFrame({cfg.id_col: df[cfg.id_col], "oof_pred": oof_preds})
     oof_df.to_csv(cfg.oof_dir / "oof_predictions.csv", index=False)
 
     log_experiment(

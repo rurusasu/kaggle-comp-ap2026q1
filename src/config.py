@@ -8,6 +8,16 @@ class Config:
     seed: int = 42
     n_folds: int = 5
 
+    target_col: str = "track_popularity"
+    id_col: str = "ID"
+
+    numeric_features: tuple = (
+        "danceability", "energy", "key", "loudness", "mode",
+        "speechiness", "acousticness", "instrumentalness",
+        "liveness", "valence", "tempo", "duration_ms",
+    )
+    categorical_features: tuple = ("playlist_genre", "playlist_subgenre")
+
     data_dir: Path = Path("data")
     output_dir: Path = Path("outputs")
     logs_dir: Path = Path("logs")

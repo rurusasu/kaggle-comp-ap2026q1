@@ -14,7 +14,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import Config
-from src.dataset import load_test
+from src.dataset import load_test, load_train
 from src.features import build_features
 from src.model import load_model, predict
 from src.submit import create_submission
@@ -31,13 +31,18 @@ def main():
     set_seed(cfg.seed)
     model_dir = Path(args.model_dir) if args.model_dir else cfg.models_dir
 
-    with Timer("load data"):
+    # Fit encoders on train data first
+    with Timer("load train (for encoders)"):
+        train_df = load_train(cfg)
+        build_features(train_df, cfg, is_train=True)
+
+    with Timer("load test data"):
         df = load_test(cfg)
 
     with Timer("build features"):
         df = build_features(df, cfg, is_train=False)
 
-    feature_cols = [c for c in df.columns if c != "id"]
+    feature_cols = [c for c in df.columns if c not in [cfg.id_col, cfg.target_col]]
 
     # Ensemble predictions from all fold models
     model_paths = sorted(model_dir.glob("model_fold*.pkl"))
@@ -52,7 +57,13 @@ def main():
         all_preds.append(preds)
 
     ensemble_preds = np.mean(all_preds, axis=0)
-    submission_path = create_submission(cfg, df["id"].tolist(), ensemble_preds.tolist())
+    submission_path = create_submission(
+        cfg,
+        df[cfg.id_col].tolist(),
+        ensemble_preds.tolist(),
+        id_col=cfg.id_col,
+        target_col=cfg.target_col,
+    )
     print(f"Submission saved to {submission_path}")
 
 
