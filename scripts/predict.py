@@ -6,6 +6,7 @@ Usage:
 """
 
 import argparse
+import pickle
 import sys
 from pathlib import Path
 
@@ -15,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import Config
 from src.dataset import load_test, load_train
-from src.features import build_features
+from src.features import build_features_stateless, fit_encodings
 from src.model import load_model, predict
 from src.submit import create_submission
 from src.utils import Timer, set_seed
@@ -31,32 +32,46 @@ def main():
     set_seed(cfg.seed)
     model_dir = Path(args.model_dir) if args.model_dir else cfg.models_dir
 
-    # Fit encoders on train data first
-    with Timer("load train (for encoders)"):
-        train_df = load_train(cfg)
-        build_features(train_df, cfg, is_train=True)
+    # Load pre-computed encodings (saved by train.py)
+    enc_path = model_dir / "encodings.pkl"
+    if enc_path.exists():
+        print(f"Loading encodings from {enc_path}")
+        with open(enc_path, "rb") as f:
+            encodings = pickle.load(f)
+    else:
+        # Fallback: fit encodings on train data
+        print("No saved encodings found, fitting on train data...")
+        with Timer("load train (for encoders)"):
+            train_df = load_train(cfg)
+            encodings = fit_encodings(train_df, cfg)
 
     with Timer("load test data"):
         df = load_test(cfg)
 
     with Timer("build features"):
-        df = build_features(df, cfg, is_train=False)
+        df, feature_cols = build_features_stateless(df, cfg, encodings)
 
-    feature_cols = [c for c in df.columns if c not in [cfg.id_col, cfg.target_col]]
+    # Load models and ensemble
+    # Prefer full model if available
+    full_model_path = model_dir / "model_full.pkl"
+    fold_model_paths = sorted(model_dir.glob("model_fold*.pkl"))
 
-    # Ensemble predictions from all fold models
-    model_paths = sorted(model_dir.glob("model_fold*.pkl"))
-    if not model_paths:
+    if full_model_path.exists():
+        print(f"Using full model: {full_model_path}")
+        model = load_model(full_model_path)
+        ensemble_preds = predict(model, df[feature_cols])
+    elif fold_model_paths:
+        print(f"Ensembling {len(fold_model_paths)} fold models")
+        all_preds = []
+        for path in fold_model_paths:
+            model = load_model(path)
+            preds = predict(model, df[feature_cols])
+            all_preds.append(preds)
+        ensemble_preds = np.mean(all_preds, axis=0)
+    else:
         print(f"No models found in {model_dir}")
         sys.exit(1)
 
-    all_preds = []
-    for path in model_paths:
-        model = load_model(path)
-        preds = predict(model, df[feature_cols])
-        all_preds.append(preds)
-
-    ensemble_preds = np.mean(all_preds, axis=0)
     submission_path = create_submission(
         cfg,
         df[cfg.id_col].tolist(),
