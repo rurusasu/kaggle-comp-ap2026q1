@@ -32,14 +32,18 @@ def main():
     set_seed(cfg.seed)
 
     with Timer("load data"):
-        df = load_train(cfg)
+        raw_df = load_train(cfg)
 
+    # Build features on full train set (target encoding fitted here)
     with Timer("build features"):
-        df = build_features(df, cfg, is_train=True)
+        df = build_features(raw_df, cfg, is_train=True)
 
     feature_cols = [c for c in df.columns if c not in [cfg.id_col, cfg.target_col]]
     X = df[feature_cols]
     y = df[cfg.target_col].values
+
+    print(f"Features: {len(feature_cols)}")
+    print(f"Feature names: {feature_cols}")
 
     splitter = get_cv_splitter(cfg)
     fold_scores = []
@@ -71,11 +75,12 @@ def main():
     log_experiment(
         cfg,
         {
-            "experiment": f"seed{cfg.seed}_folds{cfg.n_folds}",
+            "experiment": f"v2_seed{cfg.seed}_folds{cfg.n_folds}",
             "seed": cfg.seed,
             "n_folds": cfg.n_folds,
             "fold_scores": fold_scores,
             "mean_score": float(mean_score),
+            "n_features": len(feature_cols),
         },
     )
 

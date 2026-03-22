@@ -15,21 +15,26 @@ def train(
     from lightgbm import LGBMRegressor
 
     model = LGBMRegressor(
-        n_estimators=1000,
-        learning_rate=0.05,
-        max_depth=7,
-        num_leaves=63,
-        subsample=0.8,
-        colsample_bytree=0.8,
+        n_estimators=2000,
+        learning_rate=0.03,
+        max_depth=-1,
+        num_leaves=127,
+        min_child_samples=20,
+        subsample=0.7,
+        subsample_freq=1,
+        colsample_bytree=0.7,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
         random_state=42,
         verbosity=-1,
+        n_jobs=-1,
     )
     model.fit(
         X_train,
         y_train,
         eval_set=[(X_valid, y_valid)],
         callbacks=[
-            __import__("lightgbm").early_stopping(50, verbose=False),
+            __import__("lightgbm").early_stopping(100, verbose=False),
             __import__("lightgbm").log_evaluation(0),
         ],
     )
