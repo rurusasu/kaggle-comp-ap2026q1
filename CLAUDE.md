@@ -1,3 +1,32 @@
+# AP2026Q1
+
+## Competition Info
+
+- **URL:** https://www.kaggle.com/competitions/ap2026q1
+- **Deadline:** 2026-06-17 23:59 UTC
+- **Prize:** Kudos
+- **Category:** Community
+
+## Task
+
+Spotify の楽曲データから `track_popularity` を予測する回帰タスク。
+
+## Data
+
+- `base_train.csv` — 26,266行 × 24カラム（`track_popularity` を含む）
+- `base_val.csv` — 6,567行 × 23カラム（`track_popularity` なし = 予測対象）
+- 特徴量: danceability, energy, key, loudness, mode, speechiness, acousticness, instrumentalness, liveness, valence, tempo, duration_ms, playlist_genre, playlist_subgenre 等
+
+## Evaluation
+
+- 回帰タスク（具体的な metric は Kaggle ページで確認）
+
+## Submission Format
+
+- Kaggle ページで確認
+
+---
+
 # Kaggle Competition Workspace
 
 ## Structure
