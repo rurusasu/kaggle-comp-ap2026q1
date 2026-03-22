@@ -8,6 +8,7 @@ dependencies = [
     "numpy>=1.26",
     "scikit-learn>=1.5",
     "lightgbm>=4.3",
+    "catboost>=1.2.10",
 ]
 
 [project.optional-dependencies]

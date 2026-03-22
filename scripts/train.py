@@ -61,7 +61,7 @@ def main():
             X_valid = df_valid[feature_cols]
             y_valid = df_valid[cfg.target_col].values
 
-            model = train(X_train, y_train, X_valid, y_valid)
+            model = train(X_train, y_train, X_valid, y_valid, seed=cfg.seed)
             preds = predict(model, X_valid)
             oof_preds[valid_idx] = preds
 
@@ -83,7 +83,7 @@ def main():
     log_experiment(
         cfg,
         {
-            "experiment": f"v3_seed{cfg.seed}_folds{cfg.n_folds}",
+            "experiment": f"v4_seed{cfg.seed}_folds{cfg.n_folds}",
             "seed": cfg.seed,
             "n_folds": cfg.n_folds,
             "fold_scores": fold_scores,
@@ -101,14 +101,15 @@ def main():
 
     # Save full-data encodings for predict.py
     import pickle
+
     enc_path = cfg.models_dir / "encodings.pkl"
     enc_path.parent.mkdir(parents=True, exist_ok=True)
     with open(enc_path, "wb") as f:
         pickle.dump(full_encodings, f)
     print(f"Encodings saved to {enc_path}")
 
-    # Train final models (one per fold seed for diversity, but here just one)
-    final_model = train(X_full, y_full, X_full, y_full)
+    # Train final model on full data
+    final_model = train(X_full, y_full, X_full, y_full, seed=cfg.seed)
     save_model(final_model, cfg.models_dir / "model_full.pkl")
     print("Full model saved.")
 

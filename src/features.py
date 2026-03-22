@@ -3,18 +3,6 @@ import pandas as pd
 
 from src.config import Config
 
-# Smoothing factor for target encoding
-SMOOTHING = 10
-
-
-def _compute_target_encoding(
-    train_col: pd.Series, target: pd.Series, global_mean: float
-) -> dict:
-    """Compute smoothed target encoding map from training data."""
-    stats = pd.DataFrame({"col": train_col, "target": target}).groupby("col")["target"].agg(["mean", "count"])
-    smooth_mean = (stats["count"] * stats["mean"] + SMOOTHING * global_mean) / (stats["count"] + SMOOTHING)
-    return smooth_mean.to_dict()
-
 
 def _compute_freq_encoding(col: pd.Series) -> dict:
     """Compute frequency encoding map."""
@@ -22,18 +10,17 @@ def _compute_freq_encoding(col: pd.Series) -> dict:
 
 
 def build_features_stateless(df: pd.DataFrame, cfg: Config, encodings: dict) -> pd.DataFrame:
-    """Build features using pre-computed encodings (no fitting).
+    """Build features using pre-computed encodings (no fitting, no target encoding).
 
     Args:
         df: Raw dataframe.
         cfg: Config.
-        encodings: Dict with keys 'target_enc', 'freq_enc', 'global_mean'.
+        encodings: Dict with keys 'freq_enc', 'label_enc'.
     """
     out = df.copy()
 
-    target_enc = encodings["target_enc"]
     freq_enc = encodings["freq_enc"]
-    global_mean = encodings["global_mean"]
+    label_enc = encodings["label_enc"]
 
     # --- Date features from track_album_release_date ---
     out["release_date"] = pd.to_datetime(out["track_album_release_date"], errors="coerce")
@@ -42,27 +29,28 @@ def build_features_stateless(df: pd.DataFrame, cfg: Config, encodings: dict) -> 
     out["release_day"] = out["release_date"].dt.day.fillna(1).astype(int)
     ref_date = pd.Timestamp("2020-01-01")
     out["release_days_since_ref"] = (out["release_date"] - ref_date).dt.days.fillna(0).astype(int)
+    out["release_dayofweek"] = out["release_date"].dt.dayofweek.fillna(0).astype(int)
 
     # --- Frequency encoding for high-cardinality categoricals ---
-    # NOTE: removed track_id from freq encoding (too leaky, maps directly to target)
     freq_cols = ["track_artist", "track_album_id", "playlist_id"]
     for col in freq_cols:
-        col_str = out[col].astype(str)
+        col_str = out[col].fillna("__MISSING__").astype(str)
         freq_map = freq_enc.get(col, {})
         out[f"{col}_freq"] = col_str.map(freq_map).fillna(1).astype(int)
 
-    # --- Target encoding for categoricals ---
-    # NOTE: removed track_id target encoding (pure leakage)
-    # NOTE: removed track_album_id target encoding (high leakage risk with sparse categories)
-    target_enc_cols = ["playlist_genre", "playlist_subgenre", "track_artist"]
-    for col in target_enc_cols:
-        col_str = out[col].astype(str)
-        enc_map = target_enc.get(col, {})
-        out[f"{col}_target_enc"] = col_str.map(enc_map).fillna(global_mean)
+    # Log-frequency (frequency can be very skewed)
+    for col in freq_cols:
+        out[f"{col}_log_freq"] = np.log1p(out[f"{col}_freq"])
 
-    # --- Label encoding for genre/subgenre ---
+    # --- Label encoding for categoricals ---
     for col in ["playlist_genre", "playlist_subgenre"]:
-        out[f"{col}_label"] = out[col].astype("category").cat.codes
+        enc_map = label_enc.get(col, {})
+        out[f"{col}_label"] = out[col].fillna("__MISSING__").astype(str).map(enc_map).fillna(-1).astype(int)
+
+    # Label encoding for high-cardinality (track_artist, track_album_id)
+    for col in ["track_artist", "track_album_id"]:
+        enc_map = label_enc.get(col, {})
+        out[f"{col}_label"] = out[col].fillna("__MISSING__").astype(str).map(enc_map).fillna(-1).astype(int)
 
     # --- Audio feature interactions ---
     out["energy_loudness"] = out["energy"] * out["loudness"]
@@ -73,14 +61,21 @@ def build_features_stateless(df: pd.DataFrame, cfg: Config, encodings: dict) -> 
     out["tempo_energy"] = out["tempo"] * out["energy"]
     out["duration_min"] = out["duration_ms"] / 60000.0
     out["loudness_squared"] = out["loudness"] ** 2
+    out["energy_squared"] = out["energy"] ** 2
+    out["valence_energy"] = out["valence"] * out["energy"]
+    out["instrumentalness_acousticness"] = out["instrumentalness"] * out["acousticness"]
+    out["liveness_energy"] = out["liveness"] * out["energy"]
+    out["tempo_danceability"] = out["tempo"] * out["danceability"]
+    out["loudness_energy_ratio"] = out["loudness"] / (out["energy"] + 1e-8)
 
     # --- Collect feature columns ---
     feature_cols = (
         list(cfg.numeric_features)
-        + ["release_year", "release_month", "release_day", "release_days_since_ref"]
+        + ["release_year", "release_month", "release_day", "release_days_since_ref", "release_dayofweek"]
         + [f"{c}_freq" for c in freq_cols]
-        + [f"{c}_target_enc" for c in target_enc_cols]
+        + [f"{c}_log_freq" for c in freq_cols]
         + ["playlist_genre_label", "playlist_subgenre_label"]
+        + ["track_artist_label", "track_album_id_label"]
         + [
             "energy_loudness",
             "danceability_valence",
@@ -90,6 +85,12 @@ def build_features_stateless(df: pd.DataFrame, cfg: Config, encodings: dict) -> 
             "tempo_energy",
             "duration_min",
             "loudness_squared",
+            "energy_squared",
+            "valence_energy",
+            "instrumentalness_acousticness",
+            "liveness_energy",
+            "tempo_danceability",
+            "loudness_energy_ratio",
         ]
     )
 
@@ -101,32 +102,30 @@ def build_features_stateless(df: pd.DataFrame, cfg: Config, encodings: dict) -> 
 
 
 def fit_encodings(df: pd.DataFrame, cfg: Config) -> dict:
-    """Fit target and frequency encodings on training data.
+    """Fit frequency and label encodings on training data (NO target encoding).
 
-    Returns dict with 'target_enc', 'freq_enc', 'global_mean'.
+    Returns dict with 'freq_enc', 'label_enc'.
     """
-    global_mean = df[cfg.target_col].mean()
-
     # Frequency encodings
     freq_cols = ["track_artist", "track_album_id", "playlist_id"]
     freq_enc = {}
     for col in freq_cols:
-        freq_enc[col] = _compute_freq_encoding(df[col].astype(str))
+        freq_enc[col] = _compute_freq_encoding(df[col].fillna("__MISSING__").astype(str))
 
-    # Target encodings
-    target_enc_cols = ["playlist_genre", "playlist_subgenre", "track_artist"]
-    target_enc = {}
-    for col in target_enc_cols:
-        target_enc[col] = _compute_target_encoding(df[col].astype(str), df[cfg.target_col], global_mean)
+    # Label encodings (deterministic mapping based on training data)
+    label_enc = {}
+    for col in ["playlist_genre", "playlist_subgenre", "track_artist", "track_album_id"]:
+        str_vals = df[col].fillna("__MISSING__").astype(str).unique()
+        unique_vals = sorted(str_vals)
+        label_enc[col] = {v: i for i, v in enumerate(unique_vals)}
 
     return {
-        "target_enc": target_enc,
         "freq_enc": freq_enc,
-        "global_mean": global_mean,
+        "label_enc": label_enc,
     }
 
 
-# --- Legacy interface for backward compat (used by predict.py) ---
+# --- Legacy interface for backward compat ---
 
 _cached_encodings: dict = {}
 
